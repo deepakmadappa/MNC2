@@ -52,7 +52,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 100000000.0;
+float TIMEOUT = 100000.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it's value; 
 int SND_BUFSIZE = 1000; //Sender's Buffer size
 int RCV_BUFSIZE = 1000; //Receiver's Buffer size
@@ -141,7 +141,7 @@ void SendTillWindowEnd() {
 }
 
 bool IsInInterval(int value,int start, int end) {
-	for(int i = start; i!= end; (i+1)%SEQ_END ) {
+	for(int i = start; i!= end; i=(i+1)%SEQ_END ) {
 		if(value == i)
 			return true;
 	}
@@ -150,7 +150,7 @@ bool IsInInterval(int value,int start, int end) {
 
 void SetWindowSize() {
 	int count = 0;
-	for(int i = A_globals.windowBase; i!= A_globals.nextSequenceNumber; (i+1)%SEQ_END ) {
+	for(int i = A_globals.windowBase; i!= A_globals.nextSequenceNumber; i = (i+1)%SEQ_END ) {
 		count++;
 	}
 	A_globals.currentWindowSize = count;
@@ -196,7 +196,7 @@ void A_input(struct pkt packet)
 void A_timerinterrupt() //ram's comment - changed the return type to void.
 {
 	//need to send all packets from last unacked packet
-	for(int i = A_globals.lastUnackedSequenceNumber; i != A_globals.nextSequenceNumber; (i+1)%SEQ_END) {
+	for(int i = A_globals.lastUnackedSequenceNumber; i != A_globals.nextSequenceNumber; i = (i+1)%SEQ_END) {
 		tolayer3(A, *A_globals.windowPackets[i]->mContent);
 		A_transport++;
 	}
@@ -226,14 +226,13 @@ void B_input(struct pkt packet)
 		//corrupt packet, drop it
 		return;
 	}
-	if(packet.acknum != B_globals.waitingForSeq) {
+	if(packet.seqnum != B_globals.waitingForSeq) {
 		//unexpected packet, respond with last successful ack
 		int ackNo = (B_globals.waitingForSeq + SEQ_END -1) % SEQ_END;	//if the very first packet is junk, it'll respond with max sequence number which is not really correct behavior but doesn't harm
 		pkt ack;
 		ack.acknum =ackNo;
 		ack.checksum = GetCheckSum(&ack, true);
 		tolayer3(B, ack);
-		B_transport++;
 		return;
 	}
 	char message[20];
@@ -247,7 +246,6 @@ void B_input(struct pkt packet)
 	ack.checksum = GetCheckSum(&ack, true);
 	tolayer3(B, ack);
 	B_globals.waitingForSeq = (B_globals.waitingForSeq + 1) % SEQ_END;
-	B_transport++;
 }
 
 /* called when B's timer goes off */
