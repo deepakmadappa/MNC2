@@ -52,7 +52,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 100000.0;
+float TIMEOUT = 100.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it's value; 
 int SND_BUFSIZE = 1000; //Sender's Buffer size
 int RCV_BUFSIZE = 1000; //Receiver's Buffer size
@@ -97,7 +97,6 @@ public:
 class SenderGlobals {
 public:
 	static int nextSequenceNumber;
-	static int lastUnackedSequenceNumber;
 	static queue<msg> senderBuffer;
 	static int currentWindowSize;
 	static int windowBase;
@@ -105,7 +104,6 @@ public:
 }A_globals;
 
 int SenderGlobals::nextSequenceNumber;
-int SenderGlobals::lastUnackedSequenceNumber;
 queue<msg> SenderGlobals::senderBuffer;
 int SenderGlobals::currentWindowSize;
 int SenderGlobals::windowBase;
@@ -196,7 +194,7 @@ void A_input(struct pkt packet)
 void A_timerinterrupt() //ram's comment - changed the return type to void.
 {
 	//need to send all packets from last unacked packet
-	for(int i = A_globals.lastUnackedSequenceNumber; i != A_globals.nextSequenceNumber; i = (i+1)%SEQ_END) {
+	for(int i = A_globals.windowBase; i != A_globals.nextSequenceNumber; i = (i+1)%SEQ_END) {
 		tolayer3(A, *A_globals.windowPackets[i]->mContent);
 		A_transport++;
 	}
@@ -209,7 +207,6 @@ void A_init() //ram's comment - changed the return type to void.
 {
 	SEQ_END = WINSIZE + 1;
 	SenderGlobals::nextSequenceNumber = 0;
-	SenderGlobals::lastUnackedSequenceNumber = 0;
 	SenderGlobals::currentWindowSize = 0;
 	SenderGlobals::windowPackets = new Packet*[SEQ_END];
 	SenderGlobals::windowBase = 0;

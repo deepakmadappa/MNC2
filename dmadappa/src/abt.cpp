@@ -121,6 +121,11 @@ void A_output(struct msg message) //ram's comment - students can change the retu
 	A_globals.g_currentPacket = nextPacket;
 	//printf("\nSending appLayer:%d trans:%d from A", A_application, A_transport+1);
 	tolayer3(0, *nextPacket);
+	printf("A:");
+	for(int i=0; i < 20; i++) {
+		printf("%c", nextPacket->payload[i]);
+	}
+	printf("\n");
 	A_transport++;
 
 	A_globals.g_nWaitingForAck = A_globals.g_nSeqNo;
@@ -165,6 +170,11 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 	//stoptimer(0);
 	//printf("\nTime out for packet seq %d", A_globals.g_nSeqNo);
 	//printf("\nSending appLayer:%d trans:%d from A", A_application, A_transport+1);
+	printf("R:");
+	for(int i=0; i < 20; i++) {
+		printf("%c", A_globals.g_currentPacket->payload[i]);
+	}
+	printf("\n");
 	tolayer3(0, *A_globals.g_currentPacket);
 	A_transport++;
 	starttimer(0, TIMEOUT);
@@ -201,9 +211,12 @@ void B_input(struct pkt packet)
 	}
 	//correct inorder packet received ack it
 	char* message = new char[20];
+	printf("B:");
 	for(int i=0; i < 20; i++) {
 		message[i] = packet.payload[i];
+		printf("%c", message[i]);
 	}
+	printf("\n");
 	tolayer5(1, message);
 	B_application++;
 	//printf("\nDelivered packet %d to app at B", B_application);
