@@ -51,7 +51,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 100.0;
+float TIMEOUT = 20.0;
 //int WINSIZE ;        //Not applicable to ABT
 //int SND_BUFSIZE = 0; //Not applicable to ABT
 //int RCV_BUFSIZE = 0; //Not applicable to ABT
@@ -59,7 +59,7 @@ float TIMEOUT = 100.0;
 
 /*My Code from here*/
 
-
+float time_local = 0;
 
 class SenderGlobals {
 public:
@@ -67,12 +67,23 @@ public:
 	static int g_nWaitingForAck;
 	static bool g_bMessageInTransit;
 	static pkt* g_currentPacket;
+	static float sentTime;
+	static bool isResentPacket;
+	static float EstRTT;
+	static float devRTT;
 }A_globals;
 
 int SenderGlobals::g_nSeqNo;
 int SenderGlobals::g_nWaitingForAck;
 bool SenderGlobals::g_bMessageInTransit;
 pkt* SenderGlobals::g_currentPacket;
+float SenderGlobals::sentTime;
+bool SenderGlobals::isResentPacket;
+float SenderGlobals::EstRTT;
+float SenderGlobals::devRTT;
+float ALPHA = 0.3;
+float BETA = 0.125;
+int DEV_MULTI = 1;
 
 class ReceiverGlobals {
 public:
@@ -82,19 +93,28 @@ int ReceiverGlobals::g_nWaitingForSeq;
 
 int GetCheckSum(pkt *packet, bool isAck) {
 	int checksum = 0;
-	if(isAck) {
-		checksum = packet->acknum;
-	} else {
-		checksum = packet->seqnum;
-	}
-	if(!isAck) {
-		for(int i=0; i < 20; i++) {
-			checksum += packet->payload[i];
-		}
+	checksum = packet->acknum;
+	checksum += packet->seqnum;
+	for(int i=0; i < 20; i++) {
+		checksum += packet->payload[i];
 	}
 	return checksum;
-
 }
+
+float abs(float value) {
+	return (value < 0)? value * -1: value;
+}
+
+void SetNewTimeOut(float sampleRTT) {
+	if(A_globals.EstRTT == 0) {
+		//for first time
+		A_globals.EstRTT = sampleRTT;	//1.5 times to be safe for the first time
+	}
+	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
+	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
+	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
+}
+
 void tolayer5(int AorB,char *datasent);
 void tolayer3(int AorB,struct pkt packet);
 void starttimer(int AorB,float increment);
@@ -107,7 +127,7 @@ void A_output(struct msg message) //ram's comment - students can change the retu
 
 	if(A_globals.g_bMessageInTransit) {
 		//we have an unacked packet in pipe drop the new packet
-		printf("\nDropping packet from layer 5, still have unacked packets");
+		//printf("\nDropping packet from layer 5, still have unacked packets");
 		return;
 	}
 	pkt *nextPacket = new pkt();
@@ -121,11 +141,13 @@ void A_output(struct msg message) //ram's comment - students can change the retu
 	A_globals.g_currentPacket = nextPacket;
 	//printf("\nSending appLayer:%d trans:%d from A", A_application, A_transport+1);
 	tolayer3(0, *nextPacket);
-	printf("A:");
+	A_globals.sentTime = time_local;
+	A_globals.isResentPacket = false;
+	/*printf("A:");
 	for(int i=0; i < 20; i++) {
 		printf("%c", nextPacket->payload[i]);
-	}
-	printf("\n");
+	}*/
+	//printf("\n");
 	A_transport++;
 
 	A_globals.g_nWaitingForAck = A_globals.g_nSeqNo;
@@ -155,6 +177,10 @@ void A_input(struct pkt packet)
 	}
 	//All is well, packet delivered successfully
 	stoptimer(0);
+	if(!A_globals.isResentPacket) {
+		//SetNewTimeOut( time_local - A_globals.sentTime);
+		//printf("TIME OUT:%f, RTT:%f\n", TIMEOUT, time_local - A_globals.sentTime);
+	}
 	A_globals.g_bMessageInTransit = false;
 	delete A_globals.g_currentPacket;
 	A_globals.g_currentPacket = NULL;
@@ -170,12 +196,13 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 	//stoptimer(0);
 	//printf("\nTime out for packet seq %d", A_globals.g_nSeqNo);
 	//printf("\nSending appLayer:%d trans:%d from A", A_application, A_transport+1);
-	printf("R:");
+	/*printf("R:");
 	for(int i=0; i < 20; i++) {
 		printf("%c", A_globals.g_currentPacket->payload[i]);
 	}
-	printf("\n");
+	printf("\n");*/
 	tolayer3(0, *A_globals.g_currentPacket);
+	A_globals.isResentPacket = true;
 	A_transport++;
 	starttimer(0, TIMEOUT);
 }  
@@ -187,6 +214,8 @@ void A_init() //ram's comment - changed the return type to void.
 	A_globals.g_nSeqNo = 0;
 	A_globals.g_bMessageInTransit = false;
 	A_globals.g_currentPacket = NULL;
+	A_globals.EstRTT = 0;
+	A_globals.devRTT = 0;
 }
 
 
@@ -211,12 +240,9 @@ void B_input(struct pkt packet)
 	}
 	//correct inorder packet received ack it
 	char* message = new char[20];
-	printf("B:");
 	for(int i=0; i < 20; i++) {
 		message[i] = packet.payload[i];
-		printf("%c", message[i]);
 	}
-	printf("\n");
 	tolayer5(1, message);
 	B_application++;
 	//printf("\nDelivered packet %d to app at B", B_application);
@@ -243,7 +269,7 @@ void B_init() //ram's comment - changed the return type to void.
 int TRACE = 1;             /* for my debugging */
 int nsim = 0;              /* number of messages from 5 to 4 so far */
 int nsimmax = 0;           /* number of msgs to generate, then stop */
-float time_local = 0;
+
 float lossprob;            /* probability that a packet is dropped  */
 float corruptprob;         /* probability that one bit is packet is flipped */
 float lambda;              /* arrival rate of messages from layer 5 */

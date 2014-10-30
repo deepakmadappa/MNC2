@@ -52,7 +52,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 100.0;
+float TIMEOUT = 20.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it; 
 int SND_BUFSIZE = 0; //Sender's Buffer size
 int RCV_BUFSIZE = 0; //Receiver's Buffer size
@@ -69,18 +69,12 @@ void stoptimer(int);
 
 int GetCheckSum(pkt *packet, bool isAck) {
 	int checksum = 0;
-	if(isAck) {
-		checksum = packet->acknum;
-	} else {
-		checksum = packet->seqnum;
-	}
-	if(!isAck) {
-		for(int i=0; i < 20; i++) {
-			checksum += packet->payload[i];
-		}
+	checksum = packet->acknum;
+	checksum += packet->seqnum;
+	for(int i=0; i < 20; i++) {
+		checksum += packet->payload[i];
 	}
 	return checksum;
-
 }
 
 #define PACKET_SIZE 20;
@@ -88,17 +82,25 @@ int SEQ_END;
 using namespace std;
 const int A = 0;
 const int B = 1;
+float ALPHA = 0.125;
+float BETA = 0.25;
+int DEV_MULTI = 4;
 
 class Packet {
 public:
+	pkt *mContent;
+	float mStartTime;
+	bool mIsAcked;
+	float mTimeout;
+	bool mIsResentPacket;
+
 	Packet(pkt* pk) {
 		mContent = pk;
 		mStartTime = time_local;
 		mIsAcked = false;
+		mTimeout = 0;
+		mIsResentPacket = false;
 	}
-	pkt *mContent;
-	float mStartTime;
-	bool mIsAcked;
 };
 
 class SenderGlobals {
@@ -110,6 +112,9 @@ public:
 	static Packet** windowPackets;	//array of packets of current window
 	static bool isTimerRunning;
 	static int seqNoOnTimer;
+	static float EstRTT;
+	static float devRTT;
+
 }A_globals;
 
 int SenderGlobals::nextSequenceNumber;
@@ -119,6 +124,9 @@ int SenderGlobals::windowBase;
 Packet** SenderGlobals::windowPackets;
 bool SenderGlobals::isTimerRunning;
 int SenderGlobals::seqNoOnTimer;
+float SenderGlobals::EstRTT = TIMEOUT;
+float SenderGlobals::devRTT = 0;
+
 
 class ReceiverGlobals {
 public:
@@ -127,6 +135,16 @@ public:
 }B_globals;
 int ReceiverGlobals::windowBase;
 pkt** ReceiverGlobals::windowPackets;
+
+
+int SetNewTimeOut(float sampleRTT) {
+	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
+	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
+	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
+	printf("RTT:%f, TIMEOUT:%f", sampleRTT, TIMEOUT);
+	return TIMEOUT;
+}
+
 
 void SendTillWindowEnd() {
 	while(!A_globals.senderBuffer.empty() && A_globals.currentWindowSize < WINSIZE) {
@@ -140,6 +158,7 @@ void SendTillWindowEnd() {
 		packet->checksum = GetCheckSum(packet, false);
 		Packet *winPacket = new Packet(packet);	//LEAKY!!!!!!
 		A_globals.windowPackets[A_globals.nextSequenceNumber] = winPacket;
+		A_globals.windowPackets[A_globals.nextSequenceNumber]->mTimeout = TIMEOUT;
 		tolayer3(A, *packet);
 		A_globals.currentWindowSize++;
 		A_transport++;
@@ -206,7 +225,7 @@ void SetNextTimer() {
 		//no packet to time
 		A_globals.isTimerRunning = true;
 		float timePassed = time_local - A_globals.windowPackets[nextPacketToTime]->mStartTime;
-		starttimer(A, TIMEOUT - timePassed);
+		starttimer(A, A_globals.windowPackets[nextPacketToTime]->mTimeout - timePassed);
 		A_globals.seqNoOnTimer = nextPacketToTime;
 
 	}
@@ -224,6 +243,12 @@ void A_input(struct pkt packet)
 		//Ack is not within window, discard it
 		return;
 	}
+
+	if(!A_globals.windowPackets[packet.acknum]->mIsResentPacket) {
+		float rtt = time_local - A_globals.windowPackets[packet.acknum]->mStartTime;
+		SetNewTimeOut(rtt);
+	}
+
 	if(packet.acknum != A_globals.seqNoOnTimer) {
 		//timer was not on this packet
 		A_globals.windowPackets[packet.acknum]->mIsAcked = true;
@@ -244,6 +269,8 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 	//stoptimer(A);
 	int seqOfTimeOutPacket = A_globals.seqNoOnTimer;
 	A_globals.windowPackets[seqOfTimeOutPacket]->mStartTime = time_local;
+	A_globals.windowPackets[seqOfTimeOutPacket]->mTimeout = TIMEOUT;
+	A_globals.windowPackets[seqOfTimeOutPacket]->mIsResentPacket = true;
 	//we need to set timer on new packet find the oldest packet
 	//resend the timedout packet
 	tolayer3(A, *A_globals.windowPackets[seqOfTimeOutPacket]->mContent);

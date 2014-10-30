@@ -27,6 +27,8 @@ struct msg {
 	char data[20];
 };
 
+float time_local = 0;
+
 /* a packet is the data unit passed from layer 4 (students code) to layer */
 /* 3 (teachers code).  Note the pre-defined packet structure, which all   */
 /* students must follow. */
@@ -52,7 +54,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 100.0;
+float TIMEOUT = 12.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it's value; 
 int SND_BUFSIZE = 1000; //Sender's Buffer size
 int RCV_BUFSIZE = 1000; //Receiver's Buffer size
@@ -66,18 +68,12 @@ void stoptimer(int);
 
 int GetCheckSum(pkt *packet, bool isAck) {
 	int checksum = 0;
-	if(isAck) {
-		checksum = packet->acknum;
-	} else {
-		checksum = packet->seqnum;
-	}
-	if(!isAck) {
-		for(int i=0; i < 20; i++) {
-			checksum += packet->payload[i];
-		}
+	checksum = packet->acknum;
+	checksum += packet->seqnum;
+	for(int i=0; i < 20; i++) {
+		checksum += packet->payload[i];
 	}
 	return checksum;
-
 }
 
 #define PACKET_SIZE 20;
@@ -85,13 +81,20 @@ int SEQ_END;
 using namespace std;
 const int A = 0;
 const int B = 1;
+float ALPHA = 0.125;
+float BETA = 0.25;
+int DEV_MULTI = 0.5;
 
 class Packet {
 public:
+	pkt *mContent;
+	float mSentTime;
+	bool mIsResentPacket;
 	Packet(pkt* pk) {
 		mContent = pk;
+		mSentTime = time_local;
+		mIsResentPacket = false;
 	}
-	pkt *mContent;
 };
 
 class SenderGlobals {
@@ -101,6 +104,8 @@ public:
 	static int currentWindowSize;
 	static int windowBase;
 	static Packet** windowPackets;	//array of packets of current window
+	static float EstRTT;
+	static float devRTT;
 }A_globals;
 
 int SenderGlobals::nextSequenceNumber;
@@ -108,12 +113,25 @@ queue<msg> SenderGlobals::senderBuffer;
 int SenderGlobals::currentWindowSize;
 int SenderGlobals::windowBase;
 Packet** SenderGlobals::windowPackets;
+float SenderGlobals::EstRTT = TIMEOUT;
+float SenderGlobals::devRTT = 0;
 
 class ReceiverGlobals {
 public:
 	static int waitingForSeq;
 }B_globals;
 int ReceiverGlobals::waitingForSeq;
+
+float abs(float value) {
+	return (value < 0)? value * -1: value;
+}
+
+int SetNewTimeOut(float sampleRTT) {
+	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
+	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
+	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
+	return TIMEOUT;
+}
 
 void SendTillWindowEnd() {
 	while(!A_globals.senderBuffer.empty() && A_globals.currentWindowSize < WINSIZE) {
@@ -180,12 +198,19 @@ void A_input(struct pkt packet)
 		//Ack is not within window, discard it
 		return;
 	}
+	if(!A_globals.windowPackets[packet.acknum]->mIsResentPacket) {
+		float rtt = time_local - A_globals.windowPackets[packet.acknum]->mSentTime;
+		SetNewTimeOut(rtt);
+	}
 	stoptimer(A);
 	A_globals.windowBase = (packet.acknum + 1) % SEQ_END;
 	if(A_globals.windowBase != A_globals.nextSequenceNumber) {
 		//there are more unacked packets
 		starttimer(A, TIMEOUT);
 	}
+	delete A_globals.windowPackets[packet.acknum]->mContent;
+	delete A_globals.windowPackets[packet.acknum];
+	A_globals.windowPackets[packet.acknum] = NULL;
 	SetWindowSize();
 	SendTillWindowEnd();
 }
@@ -196,6 +221,7 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 	//need to send all packets from last unacked packet
 	for(int i = A_globals.windowBase; i != A_globals.nextSequenceNumber; i = (i+1)%SEQ_END) {
 		tolayer3(A, *A_globals.windowPackets[i]->mContent);
+		A_globals.windowPackets[i]->mIsResentPacket = true;
 		A_transport++;
 	}
 	starttimer(A, TIMEOUT);
@@ -205,7 +231,7 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 /* entity A routines are called. You can use it to do any initialization */
 void A_init() //ram's comment - changed the return type to void.
 {
-	SEQ_END = WINSIZE + 1;
+	SEQ_END = 5000;
 	SenderGlobals::nextSequenceNumber = 0;
 	SenderGlobals::currentWindowSize = 0;
 	SenderGlobals::windowPackets = new Packet*[SEQ_END];
@@ -260,7 +286,6 @@ void B_init() //ram's comment - changed the return type to void.
 int TRACE = 1;             /* for my debugging */
 int nsim = 0;              /* number of messages from 5 to 4 so far */
 int nsimmax = 0;           /* number of msgs to generate, then stop */
-float time_local = 0;
 float lossprob;            /* probability that a packet is dropped  */
 float corruptprob;         /* probability that one bit is packet is flipped */
 float lambda;              /* arrival rate of messages from layer 5 */
@@ -564,7 +589,7 @@ int main(int argc, char **argv)
 			for (i=0; i<20; i++)
 				pkt2give.payload[i] = eventptr->pktptr->payload[i];
 			if (eventptr->eventity ==A)      /* deliver packet by calling */
-					A_input(pkt2give);            /* appropriate entity */
+				A_input(pkt2give);            /* appropriate entity */
 			else
 				B_input(pkt2give);
 			free(eventptr->pktptr);          /* free the memory for packet */
