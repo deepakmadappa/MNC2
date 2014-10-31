@@ -54,7 +54,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 12.0;
+float TIMEOUT = 20.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it's value; 
 int SND_BUFSIZE = 1000; //Sender's Buffer size
 int RCV_BUFSIZE = 1000; //Receiver's Buffer size
@@ -83,7 +83,7 @@ const int A = 0;
 const int B = 1;
 float ALPHA = 0.125;
 float BETA = 0.25;
-int DEV_MULTI = 0.5;
+int DEV_MULTI = 0;
 
 class Packet {
 public:
@@ -114,7 +114,7 @@ int SenderGlobals::currentWindowSize;
 int SenderGlobals::windowBase;
 Packet** SenderGlobals::windowPackets;
 float SenderGlobals::EstRTT = TIMEOUT;
-float SenderGlobals::devRTT = 0;
+float SenderGlobals::devRTT = 4;
 
 class ReceiverGlobals {
 public:
@@ -130,6 +130,7 @@ int SetNewTimeOut(float sampleRTT) {
 	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
 	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
 	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
+	//printf("RTT:%f, TIMEOUT: %f\n", sampleRTT, TIMEOUT);
 	return TIMEOUT;
 }
 
@@ -196,6 +197,7 @@ void A_input(struct pkt packet)
 	bool isValidAck = IsInInterval(packet.acknum, A_globals.windowBase, A_globals.nextSequenceNumber);	//Ack is within our sent window
 	if(!isValidAck) {
 		//Ack is not within window, discard it
+		TIMEOUT = TIMEOUT + 0.5;
 		return;
 	}
 	if(!A_globals.windowPackets[packet.acknum]->mIsResentPacket) {
@@ -261,7 +263,9 @@ void B_input(struct pkt packet)
 	char message[20];
 	for(int i = 0; i< 20; i++) {
 		message[i] = packet.payload[i];
+	//	printf("%c", packet.payload[i]);
 	}
+	//cout<<endl;
 	tolayer5(B, message);
 	B_application++;
 	pkt ack;

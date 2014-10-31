@@ -52,7 +52,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 20.0;
+float TIMEOUT = 5;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it; 
 int SND_BUFSIZE = 0; //Sender's Buffer size
 int RCV_BUFSIZE = 0; //Receiver's Buffer size
@@ -120,13 +120,16 @@ public:
 int SenderGlobals::nextSequenceNumber;
 queue<msg> SenderGlobals::senderBuffer;
 int SenderGlobals::currentWindowSize;
-int SenderGlobals::windowBase;
 Packet** SenderGlobals::windowPackets;
+int SenderGlobals::windowBase;
 bool SenderGlobals::isTimerRunning;
 int SenderGlobals::seqNoOnTimer;
 float SenderGlobals::EstRTT = TIMEOUT;
 float SenderGlobals::devRTT = 0;
 
+float GAMMA = 0.7;
+float gIncrement = 0;
+float STEP_SIZE = 0.2;
 
 class ReceiverGlobals {
 public:
@@ -141,7 +144,7 @@ int SetNewTimeOut(float sampleRTT) {
 	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
 	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
 	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
-	printf("RTT:%f, TIMEOUT:%f", sampleRTT, TIMEOUT);
+	//printf("RTT:%f, TIMEOUT:%f", sampleRTT, TIMEOUT);
 	return TIMEOUT;
 }
 
@@ -199,8 +202,9 @@ int findMinimumTimeLeftPacket() {
 	float min = 10000000000000000000.0;
 	int minPacket = -1;
 	for(int i = A_globals.windowBase; i!= A_globals.nextSequenceNumber; i = (i+1)%SEQ_END) {
-		if(A_globals.windowPackets[i]->mStartTime < min && A_globals.windowPackets[i]->mIsAcked == false) {
-			min = A_globals.windowPackets[i]->mStartTime;
+		float timeleft = A_globals.windowPackets[i]->mTimeout - (time_local - A_globals.windowPackets[i]->mStartTime);
+		if(timeleft < min && A_globals.windowPackets[i]->mIsAcked == false) {
+			min = timeleft;
 			minPacket = i;
 		}
 	}
@@ -214,6 +218,8 @@ void MoveWindow() {
 			break;
 		}
 		A_globals.currentWindowSize--;
+		delete A_globals.windowPackets[i]->mContent;
+		delete A_globals.windowPackets[i];
 	}
 	A_globals.windowBase = i;
 }
@@ -225,7 +231,12 @@ void SetNextTimer() {
 		//no packet to time
 		A_globals.isTimerRunning = true;
 		float timePassed = time_local - A_globals.windowPackets[nextPacketToTime]->mStartTime;
-		starttimer(A, A_globals.windowPackets[nextPacketToTime]->mTimeout - timePassed);
+		float newTime = A_globals.windowPackets[nextPacketToTime]->mTimeout - timePassed;
+		if(newTime < 0) {
+			newTime = 0;
+		}
+		starttimer(A, newTime);
+
 		A_globals.seqNoOnTimer = nextPacketToTime;
 
 	}
@@ -234,19 +245,37 @@ void SetNextTimer() {
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(struct pkt packet)
 {
+	//printf("WINDOWBASE:%d, WINDOWEND:%d, ACK:%d\n",A_globals.windowBase, A_globals.nextSequenceNumber, packet.acknum);
 	if(packet.checksum != GetCheckSum(&packet, true)) {
 		//corrupted ACK
 		return;
 	}
 	bool isValidAck = IsInInterval(packet.acknum, A_globals.windowBase, A_globals.nextSequenceNumber);	//Ack is within our sent window
 	if(!isValidAck) {
+		gIncrement = 1;
+		TIMEOUT+= gIncrement;
+		//printf("STEP_INV_INCREASE:%f, TIMEOUT: %f\n", gIncrement, TIMEOUT);
 		//Ack is not within window, discard it
 		return;
 	}
 
+	if(A_globals.windowPackets[packet.acknum]->mIsAcked) {
+		gIncrement = GAMMA * 0.2;
+		TIMEOUT+= gIncrement;
+		//printf("STEP_INCREASE:%f, TIMEOUT: %f\n", gIncrement, TIMEOUT);
+
+		return;
+
+	} else {
+		gIncrement = GAMMA * (-0.2);
+		TIMEOUT+= gIncrement;
+		//printf("STEP_DECREASE:%f, TIMEOUT: %f\n", gIncrement, TIMEOUT);
+
+	}
+
 	if(!A_globals.windowPackets[packet.acknum]->mIsResentPacket) {
 		float rtt = time_local - A_globals.windowPackets[packet.acknum]->mStartTime;
-		SetNewTimeOut(rtt);
+		//	SetNewTimeOut(rtt);
 	}
 
 	if(packet.acknum != A_globals.seqNoOnTimer) {
@@ -268,6 +297,8 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 {
 	//stoptimer(A);
 	int seqOfTimeOutPacket = A_globals.seqNoOnTimer;
+	//gIncrement = (1-GAMMA) * gIncrement + GAMMA * (0.05);
+	//TIMEOUT+= gIncrement;
 	A_globals.windowPackets[seqOfTimeOutPacket]->mStartTime = time_local;
 	A_globals.windowPackets[seqOfTimeOutPacket]->mTimeout = TIMEOUT;
 	A_globals.windowPackets[seqOfTimeOutPacket]->mIsResentPacket = true;
@@ -282,7 +313,7 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 /* entity A routines are called. You can use it to do any initialization */
 void A_init() //ram's comment - changed the return type to void.
 {
-	SEQ_END = 1001;
+	SEQ_END = WINSIZE * 3;
 	SenderGlobals::nextSequenceNumber = 0;
 	SenderGlobals::currentWindowSize = 0;
 	SenderGlobals::windowPackets = new Packet*[SEQ_END];
