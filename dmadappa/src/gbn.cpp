@@ -118,24 +118,20 @@ float SenderGlobals::devRTT = 4;
 
 class ReceiverGlobals {
 public:
-	static pkt** windowPackets;
-	static int windowBase;
-	static int windowEnd;
-
+	static int waitingForSeq;
 }B_globals;
-int ReceiverGlobals::windowBase = 0;
-pkt** ReceiverGlobals::windowPackets;
-int ReceiverGlobals::windowEnd;
+int ReceiverGlobals::waitingForSeq;
 
-float absolute(float value) {
+float abs(float value) {
 	return (value < 0)? value * -1: value;
 }
 
-void SetNewTimeOut(float sampleRTT) {
+int SetNewTimeOut(float sampleRTT) {
 	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
-	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * absolute(sampleRTT - A_globals.EstRTT);
+	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
 	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
 	//printf("RTT:%f, TIMEOUT: %f\n", sampleRTT, TIMEOUT);
+	return TIMEOUT;
 }
 
 void SendTillWindowEnd() {
@@ -144,12 +140,9 @@ void SendTillWindowEnd() {
 		A_globals.senderBuffer.pop();
 		pkt *packet = new pkt();
 		packet->seqnum = A_globals.nextSequenceNumber;
-		cout<<"S:";
 		for(int i=0; i < 20; i++) {
 			packet->payload[i] = message.data[i];
-			cout<<message.data[i];
 		}
-		cout<<endl;
 		packet->checksum = GetCheckSum(packet, false);
 		A_globals.windowPackets[A_globals.nextSequenceNumber] = new Packet(packet);
 		tolayer3(A, *packet);
@@ -232,11 +225,6 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 		tolayer3(A, *A_globals.windowPackets[i]->mContent);
 		A_globals.windowPackets[i]->mIsResentPacket = true;
 		A_transport++;
-		cout<<"R:";
-		for(int j=0 ;  j<20; j++) {
-			cout<<A_globals.windowPackets[i]->mContent->payload[j];
-		}
-		cout<<endl;	
 	}
 	starttimer(A, TIMEOUT);
 }  
@@ -252,21 +240,6 @@ void A_init() //ram's comment - changed the return type to void.
 	SenderGlobals::windowBase = 0;
 }
 
-void DeliverPackets() {
-	int i;
-	for(i=B_globals.windowBase; B_globals.windowPackets[i] != NULL; i++) {
-		char message[20];
-		cout<<"D:";
-		for(int j = 0; j< 20; j++) {
-			message[j] = B_globals.windowPackets[i]->payload[j];
-				printf("%c", message[j]);
-		}
-		cout<<endl;
-		tolayer5(B, message);
-		B_application++;
-	}
-	B_globals.windowBase = i;
-}
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
 
@@ -278,39 +251,28 @@ void B_input(struct pkt packet)
 		//corrupt packet, drop it
 		return;
 	}
-	bool isValidAck = IsInInterval(packet.seqnum, B_globals.windowBase, B_globals.windowBase + WINSIZE);
-	if(!isValidAck) {
+	if(packet.seqnum != B_globals.waitingForSeq) {
 		//unexpected packet, respond with last successful ack
-		int ackNo = (B_globals.windowBase + SEQ_END -1) % SEQ_END;	//if the very first packet is junk, it'll respond with max sequence number which is not really correct behavior but doesn't harm
+		int ackNo = (B_globals.waitingForSeq + SEQ_END -1) % SEQ_END;	//if the very first packet is junk, it'll respond with max sequence number which is not really correct behavior but doesn't harm
 		pkt ack;
 		ack.acknum =ackNo;
 		ack.checksum = GetCheckSum(&ack, true);
 		tolayer3(B, ack);
 		return;
 	}
-	pkt *copy = new pkt();
-	copy->seqnum = packet.seqnum;
-	for(int i=0;i < 20; i++) {
-		copy->payload[i] = packet.payload[i];
+	char message[20];
+	for(int i = 0; i< 20; i++) {
+		message[i] = packet.payload[i];
+	//	printf("%c", packet.payload[i]);
 	}
-	B_globals.windowPackets[packet.seqnum] = copy;
-
-	if(packet.seqnum != B_globals.windowBase) {
-		//expected packet but can't deliver till we get the first packet
-		int ackNo = (B_globals.windowBase + SEQ_END -1) % SEQ_END;	//if the very first packet is junk, it'll respond with max sequence number which is not really correct behavior but doesn't harm
-		pkt ack;
-		ack.acknum =ackNo;
-		ack.checksum = GetCheckSum(&ack, true);
-		tolayer3(B, ack);
-		return;
-	}
-	//we got ack for window base packet, move and deliver
-
-	DeliverPackets();
-	pkt ret;
-	ret.acknum = B_globals.windowBase - 1;
-	ret.checksum = GetCheckSum(&ret, true);
-	tolayer3(B, ret);
+	//cout<<endl;
+	tolayer5(B, message);
+	B_application++;
+	pkt ack;
+	ack.acknum =B_globals.waitingForSeq;
+	ack.checksum = GetCheckSum(&ack, true);
+	tolayer3(B, ack);
+	B_globals.waitingForSeq = (B_globals.waitingForSeq + 1) % SEQ_END;
 }
 
 /* called when B's timer goes off */
@@ -322,11 +284,7 @@ void B_timerinterrupt() //ram's comment - changed the return type to void.
 /* entity B routines are called. You can use it to do any initialization */
 void B_init() //ram's comment - changed the return type to void.
 {
-	B_globals.windowBase = 0;
-	B_globals.windowPackets = new pkt*[SEQ_END];
-	for(int i =0; i< SEQ_END;i++) {
-		B_globals.windowPackets[i] = NULL;
-	}
+	B_globals.waitingForSeq = 0;
 }
 
 int TRACE = 1;             /* for my debugging */
