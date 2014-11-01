@@ -139,13 +139,15 @@ public:
 int ReceiverGlobals::windowBase;
 pkt** ReceiverGlobals::windowPackets;
 
+float absolute(float value) {
+	return (value < 0)? value * -1: value;
+}
 
-int SetNewTimeOut(float sampleRTT) {
+void SetNewTimeOut(float sampleRTT) {
 	A_globals.EstRTT = (1 - ALPHA ) * A_globals.EstRTT + ALPHA * sampleRTT;
-	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * abs(sampleRTT - A_globals.EstRTT);
+	A_globals.devRTT = (1 - BETA) * A_globals.devRTT + BETA * absolute(sampleRTT - A_globals.EstRTT);
 	TIMEOUT = A_globals.EstRTT + DEV_MULTI * A_globals.devRTT;
 	//printf("RTT:%f, TIMEOUT:%f", sampleRTT, TIMEOUT);
-	return TIMEOUT;
 }
 
 
