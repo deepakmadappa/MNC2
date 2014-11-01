@@ -196,7 +196,7 @@ void A_input(struct pkt packet)
 {
 	if(packet.checksum != GetCheckSum(&packet, true)) {
 		//corrupted ACK
-		//return;
+		return;
 	}
 	bool isValidAck = IsInInterval(packet.acknum, A_globals.windowBase, A_globals.nextSequenceNumber);	//Ack is within our sent window
 	if(!isValidAck) {
