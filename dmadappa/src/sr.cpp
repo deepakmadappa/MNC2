@@ -157,9 +157,12 @@ void SendTillWindowEnd() {
 		A_globals.senderBuffer.pop();
 		pkt *packet = new pkt();
 		packet->seqnum = A_globals.nextSequenceNumber;
+		cout<<"S:";
 		for(int i=0; i < 20; i++) {
 			packet->payload[i] = message.data[i];
+			cout<<message.data[i];
 		}
+		cout<<endl;
 		packet->checksum = GetCheckSum(packet, false);
 		Packet *winPacket = new Packet(packet);	//LEAKY!!!!!!
 		A_globals.windowPackets[A_globals.nextSequenceNumber] = winPacket;
@@ -307,6 +310,11 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 	//we need to set timer on new packet find the oldest packet
 	//resend the timedout packet
 	tolayer3(A, *A_globals.windowPackets[seqOfTimeOutPacket]->mContent);
+	cout<<"R:";
+	for(int i; i<20; i++) {
+		cout<<A_globals.windowPackets[seqOfTimeOutPacket]->mContent->payload[i];
+	}
+	cout<<endl;
 	A_transport++;
 	SetNextTimer();
 }  
@@ -327,6 +335,7 @@ void DeliverPackets() {
 	int i;
 	for(i = B_globals.windowBase; B_globals.windowPackets[i]!=NULL; i=(i+1)%SEQ_END) {
 		char message[20];
+		cout<<"D:";
 		for(int j=0; j<20; j++) {
 			message[j] = B_globals.windowPackets[i]->payload[j];
 			printf("%c", message[j]);

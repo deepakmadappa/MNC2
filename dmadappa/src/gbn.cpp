@@ -144,9 +144,12 @@ void SendTillWindowEnd() {
 		A_globals.senderBuffer.pop();
 		pkt *packet = new pkt();
 		packet->seqnum = A_globals.nextSequenceNumber;
+		cout<<"S:";
 		for(int i=0; i < 20; i++) {
 			packet->payload[i] = message.data[i];
+			cout<<message.data[i];
 		}
+		cout<<endl;
 		packet->checksum = GetCheckSum(packet, false);
 		A_globals.windowPackets[A_globals.nextSequenceNumber] = new Packet(packet);
 		tolayer3(A, *packet);
@@ -229,6 +232,11 @@ void A_timerinterrupt() //ram's comment - changed the return type to void.
 		tolayer3(A, *A_globals.windowPackets[i]->mContent);
 		A_globals.windowPackets[i]->mIsResentPacket = true;
 		A_transport++;
+		cout<<"R:";
+		for(int j=0 ;  j<20; j++) {
+			cout<<A_globals.windowPackets[i]->mContent->payload[j];
+		}
+		cout<<endl;	
 	}
 	starttimer(A, TIMEOUT);
 }  
@@ -248,6 +256,7 @@ void DeliverPackets() {
 	int i;
 	for(i=B_globals.windowBase; B_globals.windowPackets[i] != NULL; i++) {
 		char message[20];
+		cout<<"D:";
 		for(int j = 0; j< 20; j++) {
 			message[j] = B_globals.windowPackets[i]->payload[j];
 				printf("%c", message[j]);
