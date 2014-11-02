@@ -178,7 +178,7 @@ void A_input(struct pkt packet)
 	//All is well, packet delivered successfully
 	stoptimer(0);
 	if(!A_globals.isResentPacket) {
-		//SetNewTimeOut( time_local - A_globals.sentTime);
+		SetNewTimeOut( time_local - A_globals.sentTime);
 		//printf("TIME OUT:%f, RTT:%f\n", TIMEOUT, time_local - A_globals.sentTime);
 	}
 	A_globals.g_bMessageInTransit = false;
