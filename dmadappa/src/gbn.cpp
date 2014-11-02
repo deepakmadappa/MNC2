@@ -54,7 +54,7 @@ int B_transport = 0;
  * Do NOT change the name/declaration of these variables
  * They are set to zero here. You will need to set them (except WINSIZE) to some proper values.
  * */
-float TIMEOUT = 20.0;
+float TIMEOUT = 5.0;
 int WINSIZE;         //This is supplied as cmd-line parameter; You will need to read this value but do NOT modify it's value; 
 int SND_BUFSIZE = 1000; //Sender's Buffer size
 int RCV_BUFSIZE = 1000; //Receiver's Buffer size
@@ -81,8 +81,8 @@ int SEQ_END;
 using namespace std;
 const int A = 0;
 const int B = 1;
-float ALPHA = 0.125;
-float BETA = 0.25;
+float ALPHA = 0.4;
+float BETA = 0.125;
 int DEV_MULTI = 0;
 
 class Packet {
